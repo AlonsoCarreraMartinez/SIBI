@@ -1,11 +1,10 @@
 from llama_index.llms.groq import Groq
 from llama_index.graph_stores.neo4j import Neo4jGraphStore
 from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.core import Settings, Document, VectorStoreIndex, StorageContext, load_index_from_storage
+from llama_index.core import Settings, Document
 import streamlit as st
 import pandas as pd
 import os
-import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -18,28 +17,30 @@ graph_store = Neo4jGraphStore(
     database="neo4j"
 )
 
-# Inicializamos Groq
+# Inicializamos el LLM
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 llm = Groq(
     model="llama-3.1-8b-instant",   
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.2,                   # control de creatividad (más bajo = más factual).
-    request_timeout=300.0              # tiempo máximo por respuesta.
+    api_key=GROQ_API_KEY,          # OJO: clave cargada desde .env
+    temperature=0.2,               # Control de creatividad (0.2 = más preciso)
+    request_timeout=300.0          # Tiempo máximo de respuesta
 )
 Settings.llm = llm
 
-# Embeddings con LlamaIndex.
+# Embeddings.
 EMBEDDING_DIR = os.path.join(os.path.dirname(__file__), "storage_motos")
-os.makedirs(EMBEDDING_DIR, exist_ok=True) #Creamos la carpeta en caso de que  no exista
+os.makedirs(EMBEDDING_DIR, exist_ok=True)  # Creamos la carpeta en caso de que no exista
 EMBED_MODEL = OllamaEmbedding(model_name="llama3")
 
-def crear_indice_si_no_existe():
 
+# En caso de no existir 'docstore.json' en storage_motos/ creamos un índice en el disco a partir del CSV.
+def crear_indice_si_no_existe():
+    
     docstore_path = os.path.join(EMBEDDING_DIR, "docstore.json")
 
     if not os.path.exists(docstore_path):
-        print("Creando índice vectorial")
+        print("Creando índice vectorial local...")
 
         base_dir = os.path.dirname(__file__)
         csv_path = os.path.abspath(os.path.join(base_dir, "..", "LimpiadorDeColumnas", "all_bikez_clean.csv"))
@@ -61,118 +62,61 @@ def crear_indice_si_no_existe():
         index = VectorStoreIndex.from_documents(documentos, embed_model=EMBED_MODEL)
         index.storage_context.persist(persist_dir=EMBEDDING_DIR)
 
-        print(f"El índice fue creado correctamente en: {EMBEDDING_DIR}")
-
+        print(f"Índice vectorial creado correctamente en: {EMBEDDING_DIR}")
     else:
-        print("El índice ya existe")
+        print("El índice ya existe. No se vuelve a crear.")
 
-# Función generadora de consultas Cypher 
-def generar_cypher(pregunta: str) -> str:
 
-    pregunta_lower = pregunta.lower()
-    condiciones = []
+# Buscamos en el índice de Neo4j motos semánticamente.
+def buscar_motos_semanticamente(pregunta: str):
 
-    marcas = ["honda", "yamaha", "kawasaki", "suzuki", "bmw", "ducati", "ktm", "triumph", "harley"] 
-    for marca in marcas: # Detectamos la marca
-        if marca in pregunta_lower:
-            condiciones.append(f"b.name =~ '(?i){marca}'")
-
-    match_cc = re.search(r"(\d{2,4})\s*(?:cc|cm3|cm cúbicos)?", pregunta_lower)
-    if match_cc: # Detectamos la cilindrada
-        cc = int(match_cc.group(1))
-        condiciones.append(f"cc >= {cc - 100} AND cc <= {cc + 100}")
-
-    match_year = re.search(r"\b(20\d{2}|19\d{2})\b", pregunta_lower)
-    if match_year: # Detectamos el año
-        year = match_year.group(1)
-        condiciones.append(f"toInteger(m.year) >= {year}")
-
-    categorias = {
-        "naked": ["naked"],
-        "sport": ["sport", "deportiva", "racing"],
-        "touring": ["touring", "viaje"],
-        "trail": ["trail", "enduro", "adventure"],
-        "custom": ["custom", "chopper"],
-        "scooter": ["scooter", "urbana"]
-    }
-
-    for key, alias in categorias.items(): # Detectamos la categoría
-        if any(word in pregunta_lower for word in alias):
-            condiciones.append(f"toLower(m.category) CONTAINS '{key}'")
-
-    # Detectamos si la moto es ligera o potente 
-    if "ligera" in pregunta_lower or "liviana" in pregunta_lower:
-        condiciones.append("dw <= 180")
-    if any(word in pregunta_lower for word in ["potente", "más de 100", "mas de 100", "fuerte"]):
-        condiciones.append("hp >= 100")
-
-    # Detectamos si el usuario especifica un número concreto de resultados
-    match_num = re.search(r"(\d+)\s*(?:moto|motos)", pregunta_lower)
-    limit_clause = f"LIMIT {match_num.group(1)}" if match_num else ""  # solo si lo pide el usuario
-
-    # Contruir consultas Cypher 
-    where_clause = " AND ".join(condiciones)
-    if where_clause:
-        where_clause = f"WHERE {where_clause}"
-
-    query = f"""
-    MATCH (b:Brand)-[:FABRICA]->(m:Motorcycle)
-    WITH 
-        b, 
-        m,
-        toFloat(m.displacement) AS cc,
-        toFloat(m.power) AS hp,
-        toFloat(m.dry_weight) AS dw
-    {where_clause}
-    RETURN 
-        b.name AS marca,
-        m.model AS modelo,
-        m.category AS tipo,
-        cc AS cilindrada,
-        hp AS potencia,
-        m.year AS año,
-        dw AS peso
-    ORDER BY rand()
-    {limit_clause}
-    """
-    print(f"\n Query generada:\n{query}\n")
-    return query.strip()
-
-# Ejecutamos la consulta Cypher
-def ejecutar_cypher(query):
     try:
-        resultados = graph_store.query(query)
-        lista = []
+        pregunta = (pregunta or "").strip()
+        
+        import re
+        match_num = re.search(r"(\d+)\s*(?:moto|motos)", pregunta.lower())
+        limit = int(match_num.group(1)) if match_num else 5 # Si no se específica, el número de motos por defecto será 5 si las hay.
+
+        embedding = EMBED_MODEL.get_text_embedding(pregunta) # A partir de la consulta generamos el embedding.
+
+        # Consulta Cypher.
+        cypher = f"""
+        CALL db.index.vector.queryNodes('moto_embeddings', {limit}, $embedding)
+        YIELD node, score
+        RETURN 
+            node.Brand                AS marca,
+            node.Model                AS modelo,
+            node.Category             AS tipo,
+            node['Displacement (ccm)'] AS cilindrada,
+            node['Power (hp)']        AS potencia,
+            node['Dry weight (kg)']   AS peso,
+            node.Year                 AS año,
+            node['Color options']     AS colores,
+            score
+        ORDER BY score DESC
+        LIMIT {limit}
+        """
+
+        resultados = graph_store.query(cypher, params={"embedding": embedding})
+
+        motos = []
         for r in resultados:
-            marca = r.get("marca", "Desconocida")
-            modelo = r.get("modelo", "N/A")
-            tipo = r.get("tipo", "N/A")
-            cc = r.get("cilindrada", "N/A")
-            potencia = r.get("potencia", "N/A")
-            año = r.get("año", "N/A")
-            peso = r.get("peso", "N/A")
-            lista.append(f"{marca} {modelo} ({tipo}) - {cc} cc, {potencia} hp, {peso} kg, año {año}")
-        return lista
-    except Exception as e:
-        return [f"Error al ejecutar Cypher: {e}"]
+            motos.append(
+                f"{r.get('marca', 'Desconocida')} {r.get('modelo', '')} ({r.get('tipo', '')}) - "
+                f"{r.get('cilindrada', 'N/A')} cc, {r.get('potencia', 'N/A')} hp, {r.get('peso', 'N/A')} kg, año {r.get('año', 'N/A')}, color: {r.get('colores', 'N/A')}"
+            )
 
-# Realizamos la búsqueda semántica
-def buscar_motos_semanticamente(pregunta):
-    try:
-        query_engine = index.as_query_engine(similarity_top_k=8)
-        resultado = query_engine.query(pregunta)
-        return [resultado.response]
-    except Exception as e:
-        return [f"Error en la búsqueda: {e}"]
+        return motos
 
-# Respuesta
+    except Exception as e:
+        return []
+
+
+# Respuesta.
 def generar_respuesta(pregunta, motos):
-    if not motos or "Error" in motos[0]:
 
-        print("No se encontraron coincidencias exactas. Buscando recomendaciones semánticas...")
+    if not motos or "Error" in motos[0]:
         motos = buscar_motos_semanticamente(pregunta)
-        if not motos:
-            return "No encontré motos que encajen con esa descripción."
     
     print("\nResultados encontrados:")
     for i, moto in enumerate(motos, 1):
@@ -187,7 +131,7 @@ Tienes acceso a una BASE DE DATOS de motocicletas con las siguientes columnas:
 - Marca (Brand)
 - Modelo (Model)
 - Año (Year)
-- Categoría (Category) [posibles valores: sport, naked, touring, adventure/trail, custom/cruiser, scooter, enduro, classic]
+- Categoría (Category)
 - Cilindrada (Displacement ccm)
 - Potencia (Power hp)
 - Par motor (Torque Nm)
@@ -204,51 +148,38 @@ Tienes acceso a una BASE DE DATOS de motocicletas con las siguientes columnas:
 - Descripción o notas (description)
 
 REGLAS DE CONDUCTA Y COMPORTAMIENTO:
-1. Responde SIEMPRE en español, sin excepción.
-2. Usa ÚNICAMENTE los datos disponibles en la base de datos. 
-   Si un valor no está disponible, escribe “no especificado” o “dato no disponible”.
-3. No inventes ni adivines cifras, peso, potencia o años.
-4. Evita confundir categorías de motos. No llames “sport” a una naked ni “custom” a una touring.
-5. Respeta las restricciones que pida el usuario (potencia, cilindrada, peso, color, año, tipo de moto...).
-6. Si el usuario solicita comparar modelos, haz una comparación técnica y objetiva usando los datos.
-7. No muestres IDs, consultas ni información técnica interna.
-8. No limites tus recomendaciones a dos modelos: ofrece tantas como consideres útiles según la pregunta.
-9. Mantén un tono profesional, claro y natural, demostrando conocimiento técnico.
-10. No recomiendes motos inapropiadas para el nivel del usuario (por ejemplo, superbikes a principiantes).
-11. Si no hay coincidencias exactas, ofrece las más cercanas y explícalo brevemente.
+1. Responde SIEMPRE en español, con redacción natural y fluida.
+2. Usa únicamente los datos del dataset. No inventes, completes ni estimes ningún valor.
+3. Si un dato falta en la base, simplemente omítelo del formato. Solo menciona su ausencia si afecta directamente a la recomendación (por ejemplo: “no hay información suficiente sobre este modelo para evaluar su potencia”).
+4. Mantén un tono profesional, técnico y conciso, sin explicaciones innecesarias sobre el proceso de búsqueda.
+5. Si no hay coincidencias exactas, aclara que son las más cercanas sin justificar el método de búsqueda.
+6. Si el usuario pide un número específico de resultados, devuelve exactamente esa cantidad o menos si no existen más.
+7. No repitas modelos idénticos ni versiones de distinto color del mismo modelo.
+8. Si la pregunta no tiene relación con motocicletas, responde directamente que solo puedes ofrecer información sobre motos y evita frases como “no tengo acceso a la base de datos”.
+9. Si la consulta combina parámetros imposibles o contradictorios (por ejemplo, “10 CV y 300 km/h”), explica brevemente por qué no existen modelos así y sugiere los más cercanos sin usar un tono de disculpa.
+10. Evita cualquier referencia a procesos internos, “errores semánticos” o “base de datos”. Empieza siempre con una breve introducción contextual y luego las recomendaciones.
 
 FORMATO DE RESPUESTA:
-Usa siempre esta estructura:
-
 Recomendaciones:
 1. Marca Modelo (Año) — Tipo: {{Category}}
    - Cilindrada: {{Displacement (ccm)}} cc
    - Potencia: {{Power (hp)}} CV
    - Par motor: {{Torque (Nm)}} Nm
    - Peso: {{Dry weight (kg)}} kg
-   - Altura de asiento: {{Seat height (mm)}} mm
+   - Altura del asiento: {{Seat height (mm)}} mm
    - Depósito: {{Fuel capacity (lts)}} L
+   - Sistema de refrigeración: {{Cooling system}}
    - Transmisión: {{Transmission type}}
    - Caja de cambios: {{Gearbox}}
-   - Cilindros: {{Engine cylinder}}
-   - Refrigeración: {{Cooling system}}
    - Colores disponibles: {{Color options}}
    - Motivo de recomendación: explicación breve, técnica y coherente con la solicitud del usuario.
 
-2. (Siguiente modelo...)
-   ...
-
 Conclusión:
-Cierra con una o dos líneas resumiendo qué modelo o modelos encajan mejor con la solicitud y por qué.
-
-OBJETIVO FINAL:
-Ofrecer recomendaciones técnicas y realistas, sin inventar información. 
-Adapta siempre el nivel técnico a la experiencia del usuario (principiante, intermedio, experto). 
-Tu prioridad es ayudarle a tomar una decisión informada, precisa y útil.
+Resume cuál o cuáles se ajustan mejor a los criterios solicitados y explica brevemente por qué.
 
 El usuario preguntó: "{pregunta}"
 
-Estas son las motos encontradas en la base de datos o por similitud semántica:
+Motos encontradas:
 {chr(10).join(f"{i+1}. {m}" for i, m in enumerate(motos))}
 """
 
@@ -256,13 +187,13 @@ Estas son las motos encontradas en la base de datos o por similitud semántica:
         respuesta = llm.complete(prompt)
         return respuesta.text.strip()
     except Exception as e:
-        return f"Error al generar la respuesta: {e}"
+        return f"[]"
 
-# streamlit run chatbot.py  
+
+# streamlit run chatbot.py
 pregunta = st.text_input("Pregunta")
 if st.button("Hacer pregunta"):
-    with st.spinner("Recomendando..."):
-        query = generar_cypher(pregunta)
-        motos = ejecutar_cypher(query)
+    with st.spinner("Buscando recomendaciones..."):
+        motos = buscar_motos_semanticamente(pregunta)
         respuesta = generar_respuesta(pregunta, motos)
         st.write(respuesta)
