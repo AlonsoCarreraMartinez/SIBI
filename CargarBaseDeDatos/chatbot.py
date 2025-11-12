@@ -1,4 +1,4 @@
-from llama_index.llms.ollama import Ollama
+from llama_index.llms.groq import Groq
 from llama_index.graph_stores.neo4j import Neo4jGraphStore
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.core import Settings, Document, VectorStoreIndex, StorageContext, load_index_from_storage
@@ -6,6 +6,9 @@ import streamlit as st
 import pandas as pd
 import os
 import re
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # Conexión a Neo4j.
 graph_store = Neo4jGraphStore(
@@ -15,8 +18,15 @@ graph_store = Neo4jGraphStore(
     database="neo4j"
 )
 
-# Configuración del modelo Ollama(llama3:instruct).
-llm = Ollama(model="llama3:instruct", request_timeout=300.0)
+# Inicializamos Groq
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+llm = Groq(
+    model="llama-3.1-8b-instant",   
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0.2,                   # control de creatividad (más bajo = más factual).
+    request_timeout=300.0              # tiempo máximo por respuesta.
+)
 Settings.llm = llm
 
 # Embeddings con LlamaIndex.
@@ -248,7 +258,7 @@ Estas son las motos encontradas en la base de datos o por similitud semántica:
     except Exception as e:
         return f"Error al generar la respuesta: {e}"
 
-# Streamlit
+# streamlit run chatbot.py  
 pregunta = st.text_input("Pregunta")
 if st.button("Hacer pregunta"):
     with st.spinner("Recomendando..."):
