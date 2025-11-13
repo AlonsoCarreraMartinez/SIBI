@@ -11,26 +11,26 @@ load_dotenv()
 
 # Conexión a Neo4j.
 graph_store = Neo4jGraphStore(
-    username="neo4j",
-    password="neo4j123",
-    url="bolt://127.0.0.1:7687",
-    database="neo4j"
+    url=os.getenv("NEO4J_URI"),
+    username=os.getenv("NEO4J_USER"),
+    password=os.getenv("NEO4J_PASSWORD"),
+    database=os.getenv("NEO4J_DATABASE")
 )
 
-# Inicializamos el LLM
+# Inicializamos el LLM.
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 llm = Groq(
     model="llama-3.1-8b-instant",   
-    api_key=GROQ_API_KEY,          # OJO: clave cargada desde .env
-    temperature=0.2,               # Control de creatividad (0.2 = más preciso)
-    request_timeout=300.0          # Tiempo máximo de respuesta
+    api_key=GROQ_API_KEY,          
+    temperature=0.2,               
+    request_timeout=300.0         
 )
 Settings.llm = llm
 
 # Embeddings.
 EMBEDDING_DIR = os.path.join(os.path.dirname(__file__), "storage_motos")
-os.makedirs(EMBEDDING_DIR, exist_ok=True)  # Creamos la carpeta en caso de que no exista
+os.makedirs(EMBEDDING_DIR, exist_ok=True)  # Creamos la carpeta en caso de que no exista.
 EMBED_MODEL = OllamaEmbedding(model_name="llama3")
 
 
@@ -64,7 +64,7 @@ def crear_indice_si_no_existe():
 
         print(f"Índice vectorial creado correctamente en: {EMBEDDING_DIR}")
     else:
-        print("El índice ya existe. No se vuelve a crear.")
+        print("El índice ya existe.")
 
 
 # Buscamos en el índice de Neo4j motos semánticamente.
@@ -75,23 +75,29 @@ def buscar_motos_semanticamente(pregunta: str):
         
         import re
         match_num = re.search(r"(\d+)\s*(?:moto|motos)", pregunta.lower())
-        limit = int(match_num.group(1)) if match_num else 5 # Si no se específica, el número de motos por defecto será 5 si las hay.
+        limit = int(match_num.group(1)) if match_num else 5
 
-        embedding = EMBED_MODEL.get_text_embedding(pregunta) # A partir de la consulta generamos el embedding.
+        embedding = EMBED_MODEL.get_text_embedding(pregunta)
 
-        # Consulta Cypher.
         cypher = f"""
         CALL db.index.vector.queryNodes('moto_embeddings', {limit}, $embedding)
         YIELD node, score
         RETURN 
-            node.Brand                AS marca,
-            node.Model                AS modelo,
-            node.Category             AS tipo,
+            node.Brand                 AS marca,
+            node.Model                 AS modelo,
+            node.Category              AS tipo,
             node['Displacement (ccm)'] AS cilindrada,
-            node['Power (hp)']        AS potencia,
-            node['Dry weight (kg)']   AS peso,
-            node.Year                 AS año,
-            node['Color options']     AS colores,
+            node['Power (hp)']         AS potencia,
+            node['Dry weight (kg)']    AS peso,
+            node.Year                  AS año,
+            node['Seat height (mm)']   AS asiento,
+            node['Fuel capacity (lts)'] AS deposito,
+            node['Cooling system']     AS refrigeracion,
+            node['Transmission type']  AS transmision,
+            node['Gearbox']            AS caja,
+            node['Engine stroke']      AS ciclo,
+            node['Engine cylinder']    AS cilindros,
+            node['Torque (Nm)']        AS torque,
             score
         ORDER BY score DESC
         LIMIT {limit}
@@ -101,16 +107,28 @@ def buscar_motos_semanticamente(pregunta: str):
 
         motos = []
         for r in resultados:
-            motos.append(
-                f"{r.get('marca', 'Desconocida')} {r.get('modelo', '')} ({r.get('tipo', '')}) - "
-                f"{r.get('cilindrada', 'N/A')} cc, {r.get('potencia', 'N/A')} hp, {r.get('peso', 'N/A')} kg, año {r.get('año', 'N/A')}, color: {r.get('colores', 'N/A')}"
-            )
+            motos.append({
+                "marca": r.get("marca"),
+                "modelo": r.get("modelo"),
+                "tipo": r.get("tipo"),
+                "cilindrada": r.get("cilindrada"),
+                "potencia": r.get("potencia"),
+                "peso": r.get("peso"),
+                "año": r.get("año"),
+                "asiento": r.get("asiento"),
+                "deposito": r.get("deposito"),
+                "refrigeracion": r.get("refrigeracion"),
+                "transmision": r.get("transmision"),
+                "caja": r.get("caja"),
+                "ciclo": r.get("ciclo"),
+                "cilindros": r.get("cilindros"),
+                "torque": r.get("torque"),
+            })
 
         return motos
 
-    except Exception as e:
+    except Exception:
         return []
-
 
 # Respuesta.
 def generar_respuesta(pregunta, motos):
@@ -122,6 +140,11 @@ def generar_respuesta(pregunta, motos):
     for i, moto in enumerate(motos, 1):
         print(f"  {i}. {moto}")
     print()
+
+    lista_para_llm = []
+    for m in motos:
+        texto = f"{m['marca']} {m['modelo']} ({m['tipo']}) - {m['cilindrada']} cc, {m['potencia']} hp, {m['peso']} kg, año {m['año']}"
+        lista_para_llm.append(texto)
 
     prompt = f"""
 Eres MOTORBOT, un experto en motociclismo con años de experiencia asesorando a motoristas de todo tipo. 
@@ -158,8 +181,17 @@ REGLAS DE CONDUCTA Y COMPORTAMIENTO:
 8. Si la pregunta no tiene relación con motocicletas, responde directamente que solo puedes ofrecer información sobre motos y evita frases como “no tengo acceso a la base de datos”.
 9. Si la consulta combina parámetros imposibles o contradictorios (por ejemplo, “10 CV y 300 km/h”), explica brevemente por qué no existen modelos así y sugiere los más cercanos sin usar un tono de disculpa.
 10. Evita cualquier referencia a procesos internos, “errores semánticos” o “base de datos”. Empieza siempre con una breve introducción contextual y luego las recomendaciones.
+11. No realices comparaciones directas con motos que no aparezcan en la lista.
+12. No utilices términos como “probablemente”, “podría”, “seguramente” o cualquier forma especulativa.
+13. NUNCA puedes usar la palabra base de datos.
 
 FORMATO DE RESPUESTA:
+
+Explicale brevemente (2–3 líneas) al usuario qué tipo de moto está buscando, 
+qué necesidades o criterios se desprenden de la pregunta y qué enfoque seguirás 
+para seleccionar las recomendaciones. Trata al usuario como si estuvieras hablando con el en persona 
+y tienes PROHIBIDA utilizar la palabra base de datos.
+
 Recomendaciones:
 1. Marca Modelo (Año) — Tipo: {{Category}}
    - Cilindrada: {{Displacement (ccm)}} cc
@@ -171,23 +203,22 @@ Recomendaciones:
    - Sistema de refrigeración: {{Cooling system}}
    - Transmisión: {{Transmission type}}
    - Caja de cambios: {{Gearbox}}
-   - Colores disponibles: {{Color options}}
-   - Motivo de recomendación: explicación breve, técnica y coherente con la solicitud del usuario.
+   - Motivo de recomendación: explicación breve, técnica y coherente con la solicitud del usuario indicando en que se diferencia del resto de recomendaciones si las hay, además de que si las hay no repitas lo mismo en todas.
 
 Conclusión:
-Resume cuál o cuáles se ajustan mejor a los criterios solicitados y explica brevemente por qué.
+Resume cuál o cuáles se ajustan mejor a los criterios solicitados, explica brevemente por qué y haz una pequeña conclusión.
 
 El usuario preguntó: "{pregunta}"
 
 Motos encontradas:
-{chr(10).join(f"{i+1}. {m}" for i, m in enumerate(motos))}
+{chr(10).join(f"{i+1}. {t}" for i, t in enumerate(lista_para_llm))}
 """
 
     try:
         respuesta = llm.complete(prompt)
         return respuesta.text.strip()
-    except Exception as e:
-        return f"[]"
+    except Exception:
+        return "[]"
 
 
 # streamlit run chatbot.py

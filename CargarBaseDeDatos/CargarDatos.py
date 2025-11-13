@@ -1,23 +1,27 @@
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
+import os
 import pandas as pd
 import numpy as np
 
-# Nos onectamos a Neo4j 
-uri = "bolt://localhost:7687"
-user = "neo4j"
-password = "neo4j123"
+load_dotenv()
+
+# Conexión a Neo4j. 
+uri = os.getenv("NEO4J_URI")
+user = os.getenv("NEO4J_USER")
+password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=(user, password))
 
-# Cargamos el dataset 
+# Cargamos el dataset.
 df = pd.read_csv(r"C:\Users\Admin\Desktop\SIBI\LimpiadorDeColumnas\all_bikez_clean.csv")
 
-# Reemplazamos NaN o None por "Unknown" 
+# Reemplazamos NaN o None por "Unknown".
 df = df.replace({np.nan: "Unknown"})
 
-# Eliminamos filas sin marca o modelo 
+# Eliminamos filas sin marca o modelo.
 df = df[(df["Brand"] != "Unknown") & (df["Model"] != "Unknown")]
 
-# Insertamos los datos
+# Insertamos los datos.
 def insertar_moto(tx, row):
     query = """
     MERGE (b:Brand {name: $brand})
@@ -61,7 +65,7 @@ def insertar_moto(tx, row):
         "cylinder": str(row["Engine cylinder"])
     })
 
-# Ejecutamos la carga 
+# Ejecutamos la carga.
 with driver.session() as session:
     for i, row in df.iterrows():
         try:
