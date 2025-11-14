@@ -222,9 +222,174 @@ Motos encontradas:
 
 
 # streamlit run chatbot.py
-pregunta = st.text_input("Pregunta")
-if st.button("Hacer pregunta"):
-    with st.spinner("Buscando recomendaciones..."):
-        motos = buscar_motos_semanticamente(pregunta)
-        respuesta = generar_respuesta(pregunta, motos)
-        st.write(respuesta)
+st.set_page_config(page_title="MOTORBOT", layout="wide")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+# Aplicar el tema oscuro.
+def aplicar_tema():
+    tema_oscuro = st.session_state.dark_mode
+
+    if tema_oscuro:
+        fondo = "#0e1117"
+        texto = "#ffffff"
+        burbuja_user = "#1e222a"
+        burbuja_bot = "#161a23"
+        input_bg = "#1e222a"
+        arrow_color = "#000000"
+        extra_css_asistente = """
+        [data-testid="stChatMessageContent"] * {
+            color: #ffffff !important;
+        }
+        """
+    else:
+        fondo = "#ffffff"
+        texto = "#000000"
+        burbuja_user = "#f0f2f6"
+        burbuja_bot = "#e8ebf0"
+        input_bg = "#f7f7f9"
+        arrow_color = "#000000"
+        extra_css_asistente = ""
+
+    st.markdown(
+        f"""
+        <style>
+
+        {extra_css_asistente}
+
+        [data-testid="column"]:first-child > div:first-child {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            z-index: 9999;
+            background: {fondo} !important;
+            padding-bottom: 10px;
+        }}
+
+        .main > div {{
+            padding-top: 140px !important;
+        }}
+
+        html, body, .stApp, .appview-container, .main, main, main > div {{
+            background: {fondo} !important;
+            color: {texto} !important;
+        }}
+
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stHeader"],
+        [data-testid="stStatusWidget"] {{
+            background: {fondo} !important;
+        }}
+
+        .stChatMessage.user {{
+            background: {burbuja_user} !important;
+            color: {texto} !important;
+        }}
+
+        .stChatMessage.assistant {{
+            background: {burbuja_bot} !important;
+        }}
+
+        [data-testid="stBottomBlockContainer"],
+        [data-testid="stBottomBlockContainer"] > div {{
+            background: {fondo} !important;
+        }}
+
+        [data-testid="stChatInput"] {{
+            background: {fondo} !important;
+        }}
+
+        [data-testid="stChatInput"] > div:first-child {{
+            background: {input_bg} !important;
+            border-radius: 12px !important;
+            padding: 6px !important;
+        }}
+
+        [data-testid="stChatInput"] input {{
+            background: {input_bg} !important;
+            color: {texto} !important;
+        }}
+
+        [data-testid="stChatInput"] button svg {{
+            fill: {arrow_color} !important;
+            stroke: {arrow_color} !important;
+        }}
+
+        button[kind="secondary"] {{
+            color: #000000 !important;
+        }}
+
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+aplicar_tema()
+
+top_left, top_right = st.columns([0.7, 0.3])
+
+with top_left:
+    st.markdown(
+        """
+        <div style="
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+        ">
+            <span style="
+                font-size: 46px;
+                font-weight: 900;
+                font-family: 'Segoe UI', sans-serif;
+            ">
+                隼 MOTORBOT
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with top_right:
+    st.toggle("🌙 Modo oscuro", key="dark_mode")
+
+    if st.button("🔄 Reiniciar"):
+        st.session_state.messages = []
+        st.rerun()
+
+
+if len(st.session_state.messages) == 0:
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": (
+            "Hola soy MOTORBOT, tu sistema recomendador de motos.\n"
+            "¿En que puedo ayudarte?"
+        )
+    })
+
+
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+
+pregunta = st.chat_input("Escribe tu pregunta...")
+
+if pregunta:
+    st.session_state.messages.append({"role": "user", "content": pregunta})
+
+    with st.chat_message("user"):
+        st.write(pregunta)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analizando motos..."):
+            motos = buscar_motos_semanticamente(pregunta)
+            respuesta = generar_respuesta(pregunta, motos)
+            st.write(respuesta)
+
+    st.session_state.messages.append({"role": "assistant", "content": respuesta})
