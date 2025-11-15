@@ -1,17 +1,19 @@
 import pandas as pd
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent     
+DATA_DIR = BASE_DIR                   
+INPUT_FILE = DATA_DIR / "all_bikez_curated.csv"
+OUTPUT_FILE = DATA_DIR / "all_bikez_clean.csv"
 
 # Cargamos el CSV.
-df = pd.read_csv(
-    r"C:\Users\Admin\Desktop\Proyecto\all_bikez_curated.csv",
-    encoding="utf-8"
-)
+df = pd.read_csv(INPUT_FILE, encoding="utf-8")
 
 # Seleccionamos las columnas que vamos a utilizar.
 cols = [
     "Brand", "Model", "Year", "Category", "Displacement (ccm)", "Power (hp)",
     "Fuel capacity (lts)", "Dry weight (kg)", "Seat height (mm)", "Torque (Nm)",
-    "Cooling system", "Transmission type", "Rating", "Color options",
-    "Gearbox", "Engine stroke", "Engine cylinder"
+    "Cooling system", "Transmission type", "Gearbox", "Engine stroke", "Engine cylinder"
 ]
 
 df = df[cols]
@@ -36,6 +38,7 @@ df = df.drop_duplicates(subset=["Brand", "Model", "Year"])
 df = df.dropna(subset=["Model"])
 
 # Guardamos el dataset.
-df.to_csv(r"C:\Users\Admin\Desktop\Proyecto\all_bikez_clean.csv", index=False, encoding="utf-8")
+df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
+
 
 
