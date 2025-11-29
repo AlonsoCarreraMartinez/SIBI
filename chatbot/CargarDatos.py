@@ -13,7 +13,7 @@ password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=(user, password))
 
 # Cargamos el dataset.
-df = pd.read_csv(r"C:\Users\Admin\Desktop\SIBI\LimpiadorDeColumnas\all_bikez_clean.csv")
+df = pd.read_csv(r"C:\Users\Admin\Desktop\SIBI\data\all_bikez_clean.csv")
 
 # Reemplazamos NaN o None por "Unknown".
 df = df.replace({np.nan: "Unknown"})
@@ -37,8 +37,6 @@ def insertar_moto(tx, row):
         torque: $torque,
         cooling_system: $cooling,
         transmission: $transmission,
-        rating: $rating,
-        color_options: $colors,
         gearbox: $gearbox,
         engine_stroke: $stroke,
         engine_cylinder: $cylinder
@@ -58,8 +56,6 @@ def insertar_moto(tx, row):
         "torque": str(row["Torque (Nm)"]),
         "cooling": str(row["Cooling system"]),
         "transmission": str(row["Transmission type"]),
-        "rating": str(row["Rating"]),
-        "colors": str(row["Color options"]),
         "gearbox": str(row["Gearbox"]),
         "stroke": str(row["Engine stroke"]),
         "cylinder": str(row["Engine cylinder"])
