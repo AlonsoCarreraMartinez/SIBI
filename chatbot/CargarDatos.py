@@ -13,7 +13,11 @@ password = os.getenv("NEO4J_PASSWORD")
 driver = GraphDatabase.driver(uri, auth=(user, password))
 
 # Cargamos el dataset.
-df = pd.read_csv(r"C:\Users\Admin\Desktop\SIBI\data\all_bikez_clean.csv")
+
+# df = pd.read_csv(r"C:\Users\Admin\Desktop\SIBI\data\all_bikez_clean.csv")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+csv_path = os.path.join(current_dir, '..', 'data', 'all_bikez_clean.csv')
+df = pd.read_csv(csv_path)
 
 # Reemplazamos NaN o None por "Unknown".
 df = df.replace({np.nan: "Unknown"})
